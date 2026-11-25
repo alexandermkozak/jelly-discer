@@ -39,6 +39,8 @@ public sealed class MainWindow : Window
     readonly TextBlock _status = Ui.Label("", 12, Ui.Dim), _drillText = Ui.Label("", 13);
     readonly ComboBox _preset = new() { ItemsSource = new[] { "Guided", "Partial", "Ears only" }, SelectedIndex = 0, Focusable = false };
     CancellationTokenSource? _analyze;
+    readonly Border _help = new() { IsVisible = false };
+    readonly List<Action> _hints = [];
 
     public MainWindow()
     {
@@ -96,6 +98,8 @@ public sealed class MainWindow : Window
     bool Typing => FocusManager?.GetFocusedElement() is TextBox;
     void OnKey(object? s, KeyEventArgs e)
     {
+        if (e.Key == Key.F1) { ToggleHelp(); e.Handled = true; return; }
+        if (e.Key == Key.Escape && _help.IsVisible) { _help.IsVisible = false; e.Handled = true; return; }
         if (Typing) { if (e.Key == Key.Escape) _list.Focus(); return; }
         if (e.KeyModifiers is not (KeyModifiers.None or KeyModifiers.Shift) || !_keys.TryGetValue(e.Key, out var a)) return;
         if (a == "drill.done" && _drills.Active == null) return;
@@ -112,6 +116,52 @@ public sealed class MainWindow : Window
         _held.Clear();
     }
     void Say(string s) => _status.Text = s;
+
+    // ---- key help --------------------------------------------------------
+    string KeyFor(string action)
+    {
+        foreach (var (k, a) in _keys) if (a == action) return Settings.KeyName(k);
+        return "";
+    }
+    /// <summary>Adds the action's current key in small print under the button's label.</summary>
+    Button Hint(Button b, string action)
+    {
+        var label = new TextBlock { Text = b.Content as string, HorizontalAlignment = HorizontalAlignment.Center };
+        var key = new TextBlock { FontSize = 9, Opacity = 0.7, HorizontalAlignment = HorizontalAlignment.Center };
+        b.Content = new StackPanel { Children = { label, key } };
+        _hints.Add(() => { key.Text = KeyFor(action); key.IsVisible = _s.KeyHints && key.Text.Length > 0; });
+        return b;
+    }
+    TextBlock HintLabel(params string[] actions)
+    {
+        var t = Ui.Label("", 10, Ui.Dim);
+        t.HorizontalAlignment = HorizontalAlignment.Center;
+        _hints.Add(() => { t.Text = string.Join(" / ", actions.Select(KeyFor)); t.IsVisible = _s.KeyHints; });
+        return t;
+    }
+    void RefreshHints()
+    {
+        foreach (var h in _hints) h();
+        var cols = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 36 };
+        foreach (var group in Settings.DefaultKeys.Keys.GroupBy(Settings.Group))
+        {
+            var col = Col(Ui.Label(group.Key, 15, group.Key == "Deck A" ? Ui.A : group.Key == "Deck B" ? Ui.Bb : Ui.Text));
+            foreach (var a in group)
+            {
+                var key = new Border { Background = Ui.Well, BorderBrush = Ui.Line, BorderThickness = new(1), CornerRadius = new(4), MinWidth = 52, Padding = new(6, 2),
+                    Child = new TextBlock { Text = KeyFor(a), FontSize = 13, HorizontalAlignment = HorizontalAlignment.Center } };
+                col.Children.Add(Row(key, Ui.Label(Settings.ActionName(a), 13)));
+            }
+            cols.Children.Add(col);
+        }
+        _help.Background = Ui.Panel; _help.BorderBrush = Ui.Dim; _help.BorderThickness = new(1); _help.CornerRadius = new(8); _help.Padding = new(24, 18);
+        _help.HorizontalAlignment = HorizontalAlignment.Center; _help.VerticalAlignment = VerticalAlignment.Center;
+        var content = Col(Ui.Label("Keyboard shortcuts", 18), cols,
+            Ui.Label("Keys keep working while this is open. F1 or Esc closes it; change keys under Keys.", 12, Ui.Dim));
+        content.Spacing = 14;
+        _help.Child = content;
+    }
+    void ToggleHelp() => _help.IsVisible = !_help.IsVisible;
 
     // ---- layout ---------------------------------------------------------
     static StackPanel Row(params Control[] c) { var p = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 }; p.Children.AddRange(c); return p; }
@@ -156,7 +206,9 @@ public sealed class MainWindow : Window
         Grid.SetRow(waves, 1); Grid.SetRow(mid, 2); Grid.SetRow(lib, 3);
         var foot = new Border { Padding = new(10, 4), Child = _status };
         Grid.SetRow(foot, 4);
-        root.Children.AddRange([bar, waves, mid, lib, foot]);
+        Grid.SetRowSpan(_help, 5);
+        root.Children.AddRange([bar, waves, mid, lib, foot, _help]);
+        RefreshHints();
         return root;
     }
 
@@ -177,8 +229,8 @@ public sealed class MainWindow : Window
             Box("BPM", () => _assists.Bpm, v => _assists.Bpm = v), Box("Grid", () => _assists.Grid, v => _assists.Grid = v),
             Box("Phase", () => _assists.Phase, v => _assists.Phase = v), Box("Sync", () => _assists.Sync, v => _assists.Sync = v),
             Ui.Btn("Beatmatch drill", () => _ = StartDrill("Beatmatch")), Ui.Btn("Level drill", () => _ = StartDrill("Level")), Ui.Btn("History", ShowHistory),
-            rec, Ui.Btn("Settings", ShowSettings), Ui.Btn("Keys", ShowKeys), audio);
-        var done = Ui.Btn("Done", FinishDrill); var cancel = Ui.Btn("Cancel", () => { _drills.Cancel(); _drillText.Text = ""; });
+            rec, Ui.Btn("Settings", ShowSettings), Ui.Btn("Keys", ShowKeys, "Change keys"), Ui.Btn("Help F1", ToggleHelp, "Show keyboard shortcuts"), Box("Key hints", () => _s.KeyHints, v => { _s.KeyHints = v; RefreshHints(); }), audio);
+        var done = Hint(Ui.Btn("Done", FinishDrill), "drill.done"); var cancel = Ui.Btn("Cancel", () => { _drills.Cancel(); _drillText.Text = ""; });
         var drill = Row(_drillText, done, cancel);
         _tick.Add(() => { drill.IsVisible = !string.IsNullOrEmpty(_drillText.Text); done.IsVisible = _drills.Active != null; cancel.Content = _drills.Active != null ? "Cancel" : "Close"; });
         return new Border { Background = Ui.Panel, Padding = new(10, 6), Child = Col(row, drill) };
@@ -210,9 +262,9 @@ public sealed class MainWindow : Window
         var over = Live(new Overview(d) { Height = 36 });
 
         string p = d.Letter.ToLower() + ".";
-        Button Cmd(string label, string a) => Ui.Btn(label, () => _commands[p + a].down());
-        Button HoldCmd(string label, string a) => Hold(label, () => _commands[p + a].down(), () => _commands[p + a].up!());
-        var play = Toggle("Play", () => d.Deck.Playing, d.PlayPause); play.MinWidth = 70; play.MinHeight = 40; Center(play);
+        Button Cmd(string label, string a) => Hint(Ui.Btn(label, () => _commands[p + a].down()), p + a);
+        Button HoldCmd(string label, string a) => Hint(Hold(label, () => _commands[p + a].down(), () => _commands[p + a].up!()), p + a);
+        var play = Hint(Toggle("Play", () => d.Deck.Playing, d.PlayPause), p + "play"); play.MinWidth = 70; play.MinHeight = 40; Center(play);
         var cue = HoldCmd("CUE", "cue"); cue.MinWidth = 60; cue.MinHeight = 40; Center(cue); cue.Foreground = Ui.Yellow;
         var sync = Cmd("Sync", "sync"); _tick.Add(() => sync.IsVisible = _assists.Sync);
         var transport = Row(cue, play, HoldCmd("- Nudge", "nudge-"), HoldCmd("Nudge +", "nudge+"), sync,
@@ -221,13 +273,13 @@ public sealed class MainWindow : Window
         for (int i = 0; i < 4; i++)
         {
             int n = i;
-            var b = Toggle((i + 1).ToString(), () => d.Data.HotCues[n] >= 0, () => d.HotCue(n), "Set or jump; right-click clears");
+            var b = Hint(Toggle((i + 1).ToString(), () => d.Data.HotCues[n] >= 0, () => d.HotCue(n), "Set or jump; right-click clears"), p + "hot" + (i + 1));
             b.PointerReleased += (_, e) => { if (e.InitialPressMouseButton == MouseButton.Right) d.ClearHotCue(n); };
             hot.Children.Add(b);
         }
         var beats = Ui.Label("", 12); Bind(beats, () => d.LoopBeats + " beats");
-        hot.Children.AddRange([Ui.Label("  Loop", 11, Ui.Dim), Ui.Btn("-", () => d.LoopBeats = Math.Max(1, d.LoopBeats / 2)), beats, Ui.Btn("+", () => d.LoopBeats = Math.Min(32, d.LoopBeats * 2)), Toggle("On", () => d.Deck.Looping, d.ToggleLoop)]);
-        var grid = Row(Ui.Label("Grid", 11, Ui.Dim), Ui.Btn("Tap", d.Tap, "Tap along at least five times"), Ui.Btn("/2", () => d.ScaleBpm(0.5)), Ui.Btn("x2", () => d.ScaleBpm(2)),
+        hot.Children.AddRange([Ui.Label("  Loop", 11, Ui.Dim), Ui.Btn("-", () => d.LoopBeats = Math.Max(1, d.LoopBeats / 2)), beats, Ui.Btn("+", () => d.LoopBeats = Math.Min(32, d.LoopBeats * 2)), Hint(Toggle("On", () => d.Deck.Looping, d.ToggleLoop), p + "loop")]);
+        var grid = Row(Ui.Label("Grid", 11, Ui.Dim), Hint(Ui.Btn("Tap", d.Tap, "Tap along at least five times"), p + "tap"), Ui.Btn("/2", () => d.ScaleBpm(0.5)), Ui.Btn("x2", () => d.ScaleBpm(2)),
             Ui.Btn("<", () => d.ShiftGrid(-5), "Grid 5 ms earlier"), Ui.Btn(">", () => d.ShiftGrid(5), "Grid 5 ms later"), Ui.Btn("Downbeat here", d.SetDownbeat), conf);
         _tick.Add(() => grid.IsVisible = _assists.Grid || _assists.Bpm);
 
@@ -237,7 +289,7 @@ public sealed class MainWindow : Window
         Bind(pct, () => _assists.Bpm ? $"{d.Deck.Tempo * 100:+0.00;-0.00;0.00}%" : "");
         var range = Ui.Btn("", () => { }); range.Click += (_, _) => { d.Range = d.Range < 0.1f ? 0.16f : d.Range < 0.2f ? 0.5f : 0.08f; d.Deck.Tempo = Math.Clamp(d.Deck.Tempo, -d.Range, d.Range); };
         _tick.Add(() => { var t = $"±{d.Range * 100:F0}%"; if ((string?)range.Content != t) range.Content = t; });
-        var tcol = Col(range, tempo, pct); tcol.Width = 64;
+        var tcol = Col(range, tempo, pct, HintLabel(p + "tempo-", p + "tempo+")); tcol.Width = 64;
         tcol.Children[0].HorizontalAlignment = HorizontalAlignment.Center;
         var g2 = new Grid { ColumnDefinitions = new("*,Auto") };
         var left = Col(head, over, transport, hot, grid); left.Spacing = 10;
@@ -263,7 +315,7 @@ public sealed class MainWindow : Window
             var fader = Live(new Fader(true, 0, 1, 1, () => c.Fader, v => c.Fader = (float)v) { Width = 40, Height = 150 });
             var meter = Live(new MeterBar(() => c.Meter.Peak, () => c.Meter.Rms) { Width = 10, Height = 150 });
             _tick.Add(() => meter.Opacity = _drills.Active == "Level" ? 0 : 1);
-            var pfl = Toggle("Phones", () => c.Pfl, () => c.Pfl = !c.Pfl, "Send this deck to the headphones");
+            var pfl = Hint(Toggle("Phones", () => c.Pfl, () => c.Pfl = !c.Pfl, "Send this deck to the headphones"), d.Letter.ToLower() + ".pfl");
             var second = Col(filt, d.Index == 0 ? Row(fader, meter) : Row(meter, fader), pfl);
             return d.Index == 0 ? Row(knobs, second) : Row(second, knobs);
         }
@@ -273,7 +325,7 @@ public sealed class MainWindow : Window
             Live(new Knob("Cue/Mix", 0, 1, 0, () => _engine.CueBlend, v => _engine.CueBlend = (float)v, v => $"{v * 100:F0}")));
         master.Spacing = 2;
         var xf = Live(new Fader(false, 0, 1, 0.5, () => _engine.Crossfader, v => _engine.Crossfader = (float)v) { Width = 260, Height = 34 });
-        var xrow = Row(Ui.Label("A", 14, Ui.A), xf, Ui.Label("B", 14, Ui.Bb), Live(new Knob("Curve", 0, 1, 0, () => _engine.Curve, v => _engine.Curve = (float)v, v => v < 0.5 ? "smooth" : "cut")));
+        var xrow = Row(Col(Ui.Label("A", 14, Ui.A), HintLabel("xfade-")), xf, Col(Ui.Label("B", 14, Ui.Bb), HintLabel("xfade+")), Live(new Knob("Curve", 0, 1, 0, () => _engine.Curve, v => _engine.Curve = (float)v, v => v < 0.5 ? "smooth" : "cut")));
         xrow.HorizontalAlignment = HorizontalAlignment.Center;
         var strips = Row(Strip(_d[0]), master, Strip(_d[1]));
         strips.HorizontalAlignment = HorizontalAlignment.Center;
@@ -437,10 +489,35 @@ public sealed class MainWindow : Window
         catch (Exception e) { Say("Jellyfin: " + e.Message); return e is not UnauthorizedAccessException; }
     }
 
+    void Shoot(string png)
+    {
+        using var bmp = new RenderTargetBitmap(new PixelSize((int)Bounds.Width, (int)Bounds.Height));
+        bmp.Render(this);
+        bmp.Save(png);
+    }
+    async Task ShootHelp(string png)
+    {
+        RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = Key.F1, Source = this });
+        await Task.Delay(200);
+        Console.WriteLine("help open: " + _help.IsVisible);
+        Shoot(png + ".help.png");
+        RaiseEvent(new KeyEventArgs { RoutedEvent = KeyDownEvent, Key = Key.Escape, Source = this });
+        Console.WriteLine("help closed: " + !_help.IsVisible);
+    }
+
     /// <summary>Silent end-to-end check: load, play, sync, drill; writes a picture of the window and exits.</summary>
     async Task SelfTest(string png)
     {
         _engine.MasterGain = _engine.CueGain = 0;
+        if (_tracks.Count < 2)
+        {
+            Console.WriteLine("no library: window pictures only. " + _status.Text);
+            await Task.Delay(500);
+            Shoot(png);
+            await ShootHelp(png);
+            Close();
+            return;
+        }
         var pick = _tracks.Where(t => t.Title is "Rave Bar" or "Nowhere To Go").Concat(_tracks).Where(t => t.Seconds > 100).Take(2).ToList();
         Console.WriteLine($"dropouts at start {_out?.MasterUnderruns}/{_out?.CueUnderruns}");
         await LoadTrack(0, pick[0]);
@@ -457,8 +534,9 @@ public sealed class MainWindow : Window
         }
         _d[0].HotCue(0); _d[1].ToggleLoop(); _d[1].Channel.Pfl = true;
         await Task.Delay(1000);
-        using (var bmp = new RenderTargetBitmap(new PixelSize((int)Bounds.Width, (int)Bounds.Height))) { bmp.Render(this); bmp.Save(png); }
+        Shoot(png);
         Console.WriteLine($"dropouts before drill {_out?.MasterUnderruns}/{_out?.CueUnderruns}");
+        await ShootHelp(png);
         foreach (var d in _d) d.PlayPause();
         await Task.Delay(300);
         await StartDrill("Beatmatch");
@@ -564,11 +642,13 @@ public sealed class MainWindow : Window
         var col = Col(Ui.Label("Click a key, then press the new one. Escape cancels.", 12, Ui.Dim));
         var buttons = new Dictionary<string, Button>();
         string? waiting = null;
-        void Refresh() { var by = _keys.ToDictionary(k => k.Value, k => k.Key.ToString()); foreach (var (a, b) in buttons) b.Content = a == waiting ? "press a key" : by.GetValueOrDefault(a, "(none)"); }
+        void Refresh() { var by = _keys.ToDictionary(k => k.Value, k => Settings.KeyName(k.Key)); foreach (var (a, b) in buttons) b.Content = a == waiting ? "press a key" : by.GetValueOrDefault(a, "(none)"); RefreshHints(); }
+        string section = "";
         foreach (var a in Settings.DefaultKeys.Keys)
         {
+            if (section != Settings.Group(a)) col.Children.Add(Ui.Label(section = Settings.Group(a), 14, Ui.Yellow));
             buttons[a] = Ui.Btn("", () => { waiting = a; Refresh(); });
-            var l = Ui.Label(a); l.Width = 160;
+            var l = Ui.Label(Settings.ActionName(a)); l.Width = 190;
             col.Children.Add(Row(l, buttons[a]));
         }
         col.Children.Add(Ui.Btn("Restore defaults", () => { _s.Keys.Clear(); _s.Save(); _keys = _s.KeyMap(); Refresh(); }));
@@ -577,6 +657,7 @@ public sealed class MainWindow : Window
         w.AddHandler(KeyDownEvent, (_, e) =>
         {
             if (waiting == null) return;
+            if (e.Key == Key.F1) { e.Handled = true; return; } // reserved for help
             if (e.Key != Key.Escape)
             {
                 if (_keys.TryGetValue(e.Key, out var other) && other != waiting) // swap so no action loses its key

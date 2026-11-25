@@ -13,6 +13,7 @@ public sealed class Settings
     public float CueOffsetMs { get; set; }
     public bool SplitMono { get; set; }
     public float CueBlend { get; set; }
+    public bool KeyHints { get; set; } = true;
     public Dictionary<string, string> Keys { get; set; } = [];
 
     public static string ConfigDir => Dir("XDG_CONFIG_HOME", ".config");
@@ -42,6 +43,23 @@ public sealed class Settings
         ["b.play"] = Key.P, ["b.cue"] = Key.O, ["b.nudge-"] = Key.K, ["b.nudge+"] = Key.L, ["b.tempo-"] = Key.N, ["b.tempo+"] = Key.M, ["b.pfl"] = Key.I,
         ["b.hot1"] = Key.D7, ["b.hot2"] = Key.D8, ["b.hot3"] = Key.D9, ["b.hot4"] = Key.D0, ["b.loop"] = Key.U, ["b.sync"] = Key.Y, ["b.tap"] = Key.H,
         ["xfade-"] = Key.Left, ["xfade+"] = Key.Right, ["drill.done"] = Key.Enter
+    };
+    static readonly Dictionary<string, string> Names = new()
+    {
+        ["play"] = "Play / pause", ["cue"] = "Cue (hold to preview)", ["nudge-"] = "Nudge slower (hold)", ["nudge+"] = "Nudge faster (hold)",
+        ["tempo-"] = "Tempo down", ["tempo+"] = "Tempo up", ["pfl"] = "Phones on / off", ["hot1"] = "Hot cue 1", ["hot2"] = "Hot cue 2",
+        ["hot3"] = "Hot cue 3", ["hot4"] = "Hot cue 4", ["loop"] = "Loop on / off", ["sync"] = "Sync", ["tap"] = "Tap the beat",
+        ["xfade-"] = "Crossfader toward A", ["xfade+"] = "Crossfader toward B", ["drill.done"] = "Finish drill"
+    };
+    public static string Group(string action) => action.StartsWith("a.") ? "Deck A" : action.StartsWith("b.") ? "Deck B" : "Mixer and drills";
+    public static string ActionName(string action) => Names[action is ['a' or 'b', '.', ..] ? action[2..] : action];
+    public static string KeyName(Key k) => k switch
+    {
+        >= Key.D0 and <= Key.D9 => ((int)(k - Key.D0)).ToString(),
+        Key.Left => "\u2190", Key.Right => "\u2192", Key.Up => "\u2191", Key.Down => "\u2193",
+        Key.Enter => "Enter", Key.OemComma => ",", Key.OemPeriod => ".", Key.OemMinus => "-", Key.OemPlus => "=",
+        Key.OemSemicolon => ";", Key.OemQuotes => "'", Key.OemQuestion => "/", Key.OemOpenBrackets => "[", Key.OemCloseBrackets => "]",
+        _ => k.ToString()
     };
     public Dictionary<Key, string> KeyMap()
     {

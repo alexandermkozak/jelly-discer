@@ -12,7 +12,7 @@ Needs the .NET 10 SDK, `ffmpeg` and PortAudio. Optional: Rubber Band (key lock) 
 
 Assist presets: *Guided* shows everything, *Partial* hides the phase meter and sync, *Ears only* hides BPM and grids too.
 
-Keys (change them under **Keys**): deck A `Q` play, `W` cue, `A`/`S` nudge, `Z`/`X` tempo, `E` phones, `R` loop, `T` sync, `G` tap, `1`-`4` hot cues.
+Press `F1` to see every shortcut; **Key hints** shows them on the buttons. Defaults (change them under **Keys**): deck A `Q` play, `W` cue, `A`/`S` nudge, `Z`/`X` tempo, `E` phones, `R` loop, `T` sync, `G` tap, `1`-`4` hot cues.
 Deck B `P` play, `O` cue, `K`/`L` nudge, `N`/`M` tempo, `I` phones, `U` loop, `Y` sync, `H` tap, `7`-`0` hot cues. Arrows move the crossfader.
 
 Knobs: drag or scroll, double-click to reset. Right-click a hot cue to clear it.
