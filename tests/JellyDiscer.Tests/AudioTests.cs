@@ -240,6 +240,15 @@ public class AudioTests
         Assert.Equal(2.1, g.NearestBeat(2.2), 9);
     }
     [Fact]
+    public void OnlyTheInitialEmptyBufferIsExcused()
+    {
+        int Count(params bool[] flags) { var g = new StartupGuard(); int n = 0; foreach (var f in flags) if (g.IsDropout(f, 512)) n++; return n; }
+        Assert.Equal(0, Count(true, true, false, false));
+        Assert.Equal(1, Count(true, true, false, true));     // later flags count
+        Assert.Equal(1, Count(false, true));                 // no excuse once audio flows
+        Assert.Equal(3, Count(true, true, true, true, true, true, true)); // a device that never recovers shows up
+    }
+    [Fact]
     public void Scores()
     {
         Assert.Equal(100, Scoring.Beatmatch(0.01, 3, 30)); Assert.Equal(0, Scoring.Beatmatch(3, 200, 10));

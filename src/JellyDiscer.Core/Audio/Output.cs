@@ -35,6 +35,7 @@ public sealed unsafe class Output : IDisposable
     GCHandle _self;
     nint _m, _c;
     int _masterUnderruns, _cueUnderruns;
+    StartupGuard _masterStart, _cueStart;
     public int MasterUnderruns => Volatile.Read(ref _masterUnderruns);
     public int CueUnderruns => Volatile.Read(ref _cueUnderruns) + _drift.Underruns;
     public double CueFill => _drift.AverageFill;
@@ -141,7 +142,7 @@ public sealed unsafe class Output : IDisposable
     static int MasterCallback(nint input, float* o, CULong n, nint time, CULong flags, nint user)
     {
         var self = Unsafe.As<Output>(GCHandle.FromIntPtr(user).Target!);
-        if ((flags.Value & 4) != 0) self._masterUnderruns++;
+        if (self._masterStart.IsDropout((flags.Value & 4) != 0, (int)n.Value)) self._masterUnderruns++;
         var dst = new Span<float>(o, (int)n.Value * 2);
         for (int i = 0; i < dst.Length; i += Engine.MaxBlock * 2)
         {
@@ -159,7 +160,7 @@ public sealed unsafe class Output : IDisposable
     static int CueCallback(nint input, float* o, CULong n, nint time, CULong flags, nint user)
     {
         var self = Unsafe.As<Output>(GCHandle.FromIntPtr(user).Target!);
-        if ((flags.Value & 4) != 0) self._cueUnderruns++;
+        if (self._cueStart.IsDropout((flags.Value & 4) != 0, (int)n.Value)) self._cueUnderruns++;
         self._drift.Read(new Span<float>(o, (int)n.Value * 2));
         return 0;
     }
@@ -170,5 +171,21 @@ public sealed unsafe class Output : IDisposable
             if (s != 0) { Pa_AbortStream(s); Pa_CloseStream(s); }
         _m = _c = 0;
         if (_self.IsAllocated) _self.Free();
+    }
+}
+
+/// <summary>PulseAudio flags an underflow on a stream's first request, because the buffer is empty until we fill it.
+/// Nothing has been delivered by then, so nothing can be lost. Only an unbroken run of flags from the very first
+/// callback, at most 2048 frames long, is excused; everything after it counts.</summary>
+public struct StartupGuard
+{
+    const int MaxFrames = 2048;
+    int _frames;
+    bool _over;
+    public bool IsDropout(bool flagged, int frames)
+    {
+        if (!_over && (!flagged || _frames >= MaxFrames)) _over = true;
+        _frames += _over ? 0 : frames;
+        return flagged && _over;
     }
 }
