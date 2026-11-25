@@ -1,0 +1,10 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/JellyDiscer.App/JellyDiscer.App.csproj" />
+    <Project Path="src/JellyDiscer.Core/JellyDiscer.Core.csproj" />
+    <Project Path="src/JellyDiscer.Jellyfin/JellyDiscer.Jellyfin.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/JellyDiscer.Tests/JellyDiscer.Tests.csproj" />
+  </Folder>
+</Solution>
