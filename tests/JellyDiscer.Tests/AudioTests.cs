@@ -151,6 +151,26 @@ public class AudioTests
         Assert.InRange(hi - lo, 0, 0.0005); // less than one cent of wobble
         Assert.InRange((lo + hi) / 2, 1 - ppm * 1e-6 - 5e-5, 1 - ppm * 1e-6 + 5e-5);
     }
+    [Theory] [InlineData(512, 512, 0)] [InlineData(2048, 512, 0.011)] [InlineData(512, 1536, 0.004)] [InlineData(1024, 1024, 0.02)]
+    public void CueBufferSettlesWithinFourSeconds(int wb, int rb, double phase)
+    {
+        var ring = new StereoRing(1 << 15); var r = new DriftReader(ring);
+        var w = new float[wb * 2]; var o = new float[rb * 2];
+        for (int i = 0; i < w.Length; i++) w[i] = 0.5f;
+        double tw = 0, tr = phase, sum = 0; int n = 0; float maxStep = 0, prev = 0;
+        while (tr < 30)
+        {
+            if (tw <= tr) { ring.Write(w); tw += wb / 48000.0; continue; }
+            if (tr > 4) { sum += ring.Fill; n++; }
+            r.Read(o);
+            for (int i = 0; i < rb; i++) { maxStep = Math.Max(maxStep, Math.Abs(o[2 * i] - prev)); prev = o[2 * i]; }
+            tr += rb / 48000.0 * (1 + 30e-6);
+        }
+        Assert.True(r.Settled); Assert.Equal(0, r.Underruns);
+        Assert.InRange(sum / n, r.Target - 96, r.Target + 96);   // 2 ms
+        Assert.InRange(r.AverageFill, r.Target - 144, r.Target + 144);
+        Assert.True(maxStep < 0.01, $"click of {maxStep}");
+    }
     [Fact]
     public void RenderDoesNotAllocate()
     {

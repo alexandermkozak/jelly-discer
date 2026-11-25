@@ -54,11 +54,27 @@ public sealed class DriftReader(StereoRing ring, int target = 3072)
     bool _primed;
     int _underruns;
     float _fade;
+    // after priming: let the device settle, measure the mean fill, then correct all of the error at once
+    const int Settle = 24000, Measure = 48000, Rounds = 2, FadeFrames = 480;
+    int _round, _elapsed, _adjust, _hold;
+    double _sum, _weight;
+    bool _fadingOut;
     double _ratio = 1;
     public double Ratio => Volatile.Read(ref _ratio);
     public double AverageFill => Volatile.Read(ref _avg);
     public int Underruns => Volatile.Read(ref _underruns);
     public int Target => target;
+
+    /// <summary>True once the start-up correction is finished and only slow tracking remains.</summary>
+    public bool Settled => Volatile.Read(ref _round) >= Rounds;
+
+    void Acquire()
+    {
+        Volatile.Write(ref _round, 0);
+        _elapsed = _hold = 0;
+        _sum = _weight = 0;
+        _fadingOut = false;
+    }
 
     public void Read(Span<float> o)
     {
@@ -70,8 +86,39 @@ public sealed class DriftReader(StereoRing ring, int target = 3072)
             _avg = target;
             _primed = true;
             _fade = 0;
+            Acquire();
         }
-        else if (ring.Fill > target * 3) { ring.Skip(ring.Fill - target); _avg = target; _fade = 0; }
+        else if (ring.Fill > target * 3) { ring.Skip(ring.Fill - target); _avg = target; _fade = 0; Acquire(); }
+
+        if (_fadingOut && _fade <= 0)
+        {
+            _fadingOut = false;
+            if (_adjust > 0) ring.Skip(_adjust); else _hold = -_adjust;
+            Volatile.Write(ref _avg, target);
+            _integral = 0;
+        }
+        if (_hold > 0)
+        {
+            int h0 = Math.Min(_hold, frames);
+            o[..(2 * h0)].Clear();
+            _hold -= h0;
+            o = o[(2 * h0)..];
+            frames -= h0;
+            if (frames == 0) return;
+        }
+        if (_round < Rounds && !_fadingOut)
+        {
+            _elapsed += frames;
+            if (_elapsed > Settle) { _sum += (double)ring.Fill * frames; _weight += frames; }
+            if (_elapsed >= Settle + Measure)
+            {
+                _adjust = (int)Math.Round(_sum / _weight - target);
+                _round++;
+                _elapsed = 0;
+                _sum = _weight = 0;
+                _fadingOut = Math.Abs(_adjust) > 24; // half a millisecond
+            }
+        }
 
         double dt = frames / (double)TrackBuffer.SampleRate;
         double avg = _avg + (ring.Fill - _avg) * (1 - Math.Exp(-dt / 2.0));
@@ -99,7 +146,7 @@ public sealed class DriftReader(StereoRing ring, int target = 3072)
                 h[7] = r;
                 _frac -= 1;
             }
-            _fade = Math.Min(1, _fade + 1f / 480);
+            _fade = Math.Clamp(_fade + (_fadingOut ? -1f : 1f) / FadeFrames, 0, 1);
             float f = (float)_frac;
             o[2 * i] = _fade * Dsp.Hermite(h[0], h[2], h[4], h[6], f);
             o[2 * i + 1] = _fade * Dsp.Hermite(h[1], h[3], h[5], h[7], f);
