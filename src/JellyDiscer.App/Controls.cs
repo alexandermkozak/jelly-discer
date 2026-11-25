@@ -224,6 +224,6 @@ sealed class PhaseMeter(DeckController a, DeckController b) : Control
 
 public sealed class Assists
 {
-    public bool Bpm = true, Grid = true, Phase = true, Sync = true;
-    public void Preset(int i) { Bpm = i < 2; Grid = i < 2; Phase = i == 0; Sync = i == 0; }
+    public bool Bpm = true, Grid = true, Phase = true, Sync = true, Quantize = true;
+    public void Preset(int i) { Bpm = i < 2; Grid = i < 2; Phase = i == 0; Sync = i == 0; Quantize = i < 2; }
 }

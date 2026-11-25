@@ -9,6 +9,14 @@ public sealed record BeatGrid(double Bpm, double Offset, double Confidence)
     public bool Confident => Confidence >= 0.6;
     public double BeatAt(double seconds) => (seconds - Offset) / Period;
     public double TimeOf(double beat) => Offset + beat * Period;
+    public double NearestBeat(double seconds) => TimeOf(Math.Round(BeatAt(seconds)));
+    /// <summary>Whole number of beats that lands nearest to a target without going before the start of the track.</summary>
+    public int BeatsTo(double now, double target)
+    {
+        int n = (int)Math.Round((target - now) / Period);
+        while (now + n * Period < 0) n++;
+        return n;
+    }
     /// <summary>Signed distance between the beats of two decks, in beats (-0.5..0.5); positive = a is ahead.</summary>
     public static double PhaseDiff(BeatGrid a, double ta, BeatGrid b, double tb)
     {

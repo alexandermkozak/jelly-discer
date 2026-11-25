@@ -45,7 +45,7 @@ public sealed class MainWindow : Window
     public MainWindow()
     {
         Title = "jelly-discer"; Width = 1400; Height = 940; MinWidth = 1180; MinHeight = 760; Background = Ui.Bg;
-        _d = [new(0, _engine, _store), new(1, _engine, _store)];
+        _d = [new(0, _engine, _store, _assists), new(1, _engine, _store, _assists)];
         _drills = new(_d[0], _d[1], _store, () => _tracks);
         _keys = _s.KeyMap();
         _engine.PhoneMode = _s.SplitMono ? PhoneMode.SplitMono : PhoneMode.Blend;
@@ -127,7 +127,7 @@ public sealed class MainWindow : Window
     Button Hint(Button b, string action)
     {
         var label = new TextBlock { Text = b.Content as string, HorizontalAlignment = HorizontalAlignment.Center };
-        var key = new TextBlock { FontSize = 9, Opacity = 0.7, HorizontalAlignment = HorizontalAlignment.Center };
+        var key = new TextBlock { FontSize = 9, Opacity = 0.9, HorizontalAlignment = HorizontalAlignment.Center };
         b.Content = new StackPanel { Children = { label, key } };
         _hints.Add(() => { key.Text = KeyFor(action); key.IsVisible = _s.KeyHints && key.Text.Length > 0; });
         return b;
@@ -227,7 +227,7 @@ public sealed class MainWindow : Window
         var rec = Toggle("Record", () => _rec != null, ToggleRecord, "Record the master to ~/Music/jelly-discer");
         var row = Row(Ui.Label("Assists", 12, Ui.Dim), _preset,
             Box("BPM", () => _assists.Bpm, v => _assists.Bpm = v), Box("Grid", () => _assists.Grid, v => _assists.Grid = v),
-            Box("Phase", () => _assists.Phase, v => _assists.Phase = v), Box("Sync", () => _assists.Sync, v => _assists.Sync = v),
+            Box("Phase", () => _assists.Phase, v => _assists.Phase = v), Box("Sync", () => _assists.Sync, v => _assists.Sync = v), Box("Quantize", () => _assists.Quantize, v => _assists.Quantize = v),
             Ui.Btn("Beatmatch drill", () => _ = StartDrill("Beatmatch")), Ui.Btn("Level drill", () => _ = StartDrill("Level")), Ui.Btn("History", ShowHistory),
             rec, Ui.Btn("Settings", ShowSettings), Ui.Btn("Keys", ShowKeys, "Change keys"), Ui.Btn("Help F1", ToggleHelp, "Show keyboard shortcuts"), Box("Key hints", () => _s.KeyHints, v => { _s.KeyHints = v; RefreshHints(); }), audio);
         var done = Hint(Ui.Btn("Done", FinishDrill), "drill.done"); var cancel = Ui.Btn("Cancel", () => { _drills.Cancel(); _drillText.Text = ""; });
@@ -532,6 +532,19 @@ public sealed class MainWindow : Window
             await Task.Delay(w);
             Console.WriteLine($"phase {BeatGrid.PhaseDiff(_d[1].Data.Grid!, _d[1].Seconds, _d[0].Data.Grid!, _d[0].Seconds) * _d[0].Data.Grid!.Period * 1000:F2} ms, bpm {_d[0].EffectiveBpm:F3} / {_d[1].EffectiveBpm:F3}, LUFS {_d[0].Channel.Loudness.Lufs:F1} / {_d[1].Channel.Loudness.Lufs:F1}");
         }
+        foreach (bool q in new[] { true, false })
+        {
+            double Phase() => BeatGrid.PhaseDiff(_d[1].Data.Grid!, _d[1].Seconds, _d[0].Data.Grid!, _d[0].Seconds) * _d[0].Data.Grid!.Period * 1000;
+            _assists.Quantize = q;
+            _d[0].Data.HotCues[1] = 45.1 * 48000; // deliberately off the beat
+            double before = Phase();
+            _d[0].HotCue(1);
+            await Task.Delay(300);
+            Console.WriteLine($"hot cue, quantize {q}: phase {before:F2} -> {Phase():F2} ms, landed {_d[0].Seconds - 45.1:F2} s past the cue after 0.3 s");
+        }
+        _d[0].ClearHotCue(1);
+        _assists.Quantize = true;
+        _d[1].Sync(_d[0]);
         _d[0].HotCue(0); _d[1].ToggleLoop(); _d[1].Channel.Pfl = true;
         await Task.Delay(1000);
         Shoot(png);

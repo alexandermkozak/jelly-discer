@@ -213,6 +213,32 @@ public class AudioTests
         Assert.InRange(Max(0, 0, 0.6), 0.1f, 0.121f); Assert.Equal(0, Max(1, 0, 0.8));
         Assert.Equal(0, Max(0, 0.6, 2)); Assert.InRange(Max(1, 0.8, 1.4), 0.1f, 0.121f); Assert.Equal(0, Max(1, TestTone.Seconds, 2));
     }
+    [Theory] [InlineData(false)] [InlineData(true)]
+    public void WholeBeatJumpKeepsPhase(bool key)
+    {
+        var e = new Engine();
+        if (key && !e.Decks[0].KeyLockAvailable) return;
+        var t = TrackBuffer.FromSamples(Sine(200, 60));
+        var g = new BeatGrid(127.3, 0.21, 1);
+        for (int d = 0; d < 2; d++) { e.Decks[d].Tempo = 0.04f; e.Decks[d].KeyLock = key; e.Send(d, DeckOp.Load, track: t); e.Send(d, DeckOp.HotPlay, 48000 * 20); }
+        Run(e, 48000);
+        double P() => BeatGrid.PhaseDiff(g, e.Decks[0].Position / 48000, g, e.Decks[1].Position / 48000) * g.Period * 1000;
+        double before = P();
+        foreach (double cue in new[] { 40.123, 5.077, 0.0 })
+        {
+            e.Send(0, DeckOp.JumpBy, g.BeatsTo(e.Decks[0].Position / 48000, cue) * g.Period * 48000);
+            Run(e, 4800);
+            Assert.InRange(e.Decks[0].Position / 48000 - cue, -0.2, 0.7);
+            Assert.InRange(P() - before, -1.0, 1.0); // ms
+        }
+    }
+    [Fact]
+    public void BeatsToNeverGoesBeforeTheStart()
+    {
+        var g = new BeatGrid(120, 0.1, 1);
+        Assert.Equal(-19, g.BeatsTo(9.9, 0)); Assert.Equal(-20, g.BeatsTo(10.1, 0)); Assert.Equal(4, g.BeatsTo(10, 12.2));
+        Assert.Equal(2.1, g.NearestBeat(2.2), 9);
+    }
     [Fact]
     public void Scores()
     {

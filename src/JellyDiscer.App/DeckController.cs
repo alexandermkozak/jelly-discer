@@ -5,7 +5,7 @@ using JellyDiscer.Jellyfin;
 namespace JellyDiscer.App;
 
 /// <summary>Track loading, grid edits and transport for one deck. UI thread only.</summary>
-public sealed class DeckController(int index, Engine engine, Store store)
+public sealed class DeckController(int index, Engine engine, Store store, Assists assists)
 {
     public Deck Deck => engine.Decks[index];
     public Channel Channel => engine.Channels[index];
@@ -71,10 +71,20 @@ public sealed class DeckController(int index, Engine engine, Store store)
         Send(down ? DeckOp.CueDown : DeckOp.CueUp);
     }
     public void Seek(double sec) => Send(DeckOp.Seek, Math.Max(0, sec) * TrackBuffer.SampleRate);
+    /// <summary>Sets an empty hot cue or jumps to a set one. Quantized, cues are set on the beat and jumps made while
+    /// playing cover whole beats, so the mix stays in time. Needs a trustworthy grid; otherwise positions are exact.</summary>
     public void HotCue(int i)
     {
         if (Track == null) return;
-        if (Data.HotCues[i] < 0) { Data.HotCues[i] = Deck.Position; Save(); Changed?.Invoke(); }
+        var grid = assists.Quantize && Data.Grid is { Confident: true } ? Data.Grid : null;
+        if (Data.HotCues[i] < 0)
+        {
+            Data.HotCues[i] = grid == null ? Deck.Position : Math.Max(0, grid.NearestBeat(Seconds)) * TrackBuffer.SampleRate;
+            Save();
+            Changed?.Invoke();
+        }
+        else if (grid != null && Deck.Playing)
+            Send(DeckOp.JumpBy, grid.BeatsTo(Seconds, Data.HotCues[i] / TrackBuffer.SampleRate) * grid.Period * TrackBuffer.SampleRate);
         else Send(DeckOp.HotPlay, Data.HotCues[i]);
     }
     public void ClearHotCue(int i) { Data.HotCues[i] = -1; Save(); Changed?.Invoke(); }
