@@ -185,6 +185,15 @@ public class AudioTests
         Assert.InRange(m.Lufs, -20.3, -19.7); // stereo -20 dBFS peak sine is -20 LUFS
     }
     [Fact]
+    public void TestToneIsLeftThenRightAndQuiet()
+    {
+        var o = new float[48000 * 2 * 2];
+        new TestTone().Render(o);
+        float Max(int ch, double a, double b) => Enumerable.Range((int)(a * 48000), (int)((b - a) * 48000)).Max(i => Math.Abs(o[2 * i + ch]));
+        Assert.InRange(Max(0, 0, 0.6), 0.1f, 0.121f); Assert.Equal(0, Max(1, 0, 0.8));
+        Assert.Equal(0, Max(0, 0.6, 2)); Assert.InRange(Max(1, 0.8, 1.4), 0.1f, 0.121f); Assert.Equal(0, Max(1, TestTone.Seconds, 2));
+    }
+    [Fact]
     public void Scores()
     {
         Assert.Equal(100, Scoring.Beatmatch(0.01, 3, 30)); Assert.Equal(0, Scoring.Beatmatch(3, 200, 10));

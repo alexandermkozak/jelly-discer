@@ -29,6 +29,7 @@ public sealed class MainWindow : Window
     readonly List<Control> _live = [];
     readonly List<Action> _tick = [];
     Output? _out;
+    string _masterName = "";
     Recorder? _rec;
     JellyfinClient? _client;
     List<Track> _tracks = [];
@@ -402,6 +403,7 @@ public sealed class MainWindow : Window
             var devs = Output.Devices();
             var m = devs.FirstOrDefault(d => d.Name == _s.MasterDevice) ?? devs.FirstOrDefault(d => d.Name.Contains("Speaker")) ?? devs.FirstOrDefault();
             if (m == null) { Say("No audio output devices found"); return; }
+            _masterName = m.Name;
             _out = new Output(_engine, m, devs.FirstOrDefault(d => d.Name == _s.CueDevice));
             Say($"Master: {m.Name}" + (_out.HasCue ? $", headphones: {_s.CueDevice}" : ". Pick a headphone device in Settings to cue separately."));
         }
@@ -518,11 +520,32 @@ public sealed class MainWindow : Window
     void ShowSettings()
     {
         var devs = Output.Devices().Select(d => d.Name).ToList();
-        var m = new ComboBox { ItemsSource = devs, SelectedItem = _s.MasterDevice, MinWidth = 400 };
+        var m = new ComboBox { ItemsSource = devs, SelectedItem = _masterName, MinWidth = 400 };
         var c = new ComboBox { ItemsSource = devs.Prepend("(none: mix headphones into one output)").ToList(), MinWidth = 400 };
         c.SelectedIndex = devs.IndexOf(_s.CueDevice) + 1;
         m.SelectionChanged += (_, _) => { _s.MasterDevice = m.SelectedItem as string ?? ""; _s.Save(); OpenAudio(); };
         c.SelectionChanged += (_, _) => { _s.CueDevice = c.SelectedIndex <= 0 ? "" : devs[c.SelectedIndex - 1]; _s.Save(); OpenAudio(); };
+        var testMsg = Ui.Label("Test plays a quiet tone: left ear, then right.", 11, Ui.Dim); testMsg.TextWrapping = TextWrapping.Wrap;
+        Button testM = null!, testC = null!;
+        void Enable(bool idle) { testM.IsEnabled = idle && m.SelectedIndex >= 0; testC.IsEnabled = idle && c.SelectedIndex > 0; }
+        async void Test(string? name)
+        {
+            Enable(false);
+            try
+            {
+                var dev = Output.Devices().FirstOrDefault(x => x.Name == name) ?? throw new InvalidOperationException("That output is no longer available.");
+                testMsg.Text = "Playing on " + name;
+                await TestTone.PlayAsync(dev);
+                testMsg.Text = "Played on " + name + ": left, then right.";
+            }
+            catch (Exception e) { testMsg.Text = e.Message; }
+            Enable(true);
+        }
+        testM = Ui.Btn("Test", () => Test(m.SelectedItem as string));
+        testC = Ui.Btn("Test", () => Test(c.SelectedItem as string));
+        m.SelectionChanged += (_, _) => Enable(true);
+        c.SelectionChanged += (_, _) => Enable(true);
+        Enable(true);
         var split = new CheckBox { Content = "Split mono headphones: cue left, master right", IsChecked = _s.SplitMono };
         split.IsCheckedChanged += (_, _) => { _s.SplitMono = split.IsChecked == true; _engine.PhoneMode = _s.SplitMono ? PhoneMode.SplitMono : PhoneMode.Blend; _s.Save(); };
         var lab = Ui.Label("");
@@ -531,7 +554,7 @@ public sealed class MainWindow : Window
         off.PropertyChanged += (_, e) => { if (e.Property != RangeBase.ValueProperty) return; _s.CueOffsetMs = _engine.CueOffsetMs = (float)off.Value; Show(); };
         Show();
         var tip = Ui.Label("To align: play one deck, turn on Phones for it, listen to both outputs and move this until they coincide.", 11, Ui.Dim); tip.TextWrapping = TextWrapping.Wrap;
-        var w = Dialog("Settings", Col(Ui.Label("Master output"), m, Ui.Label("Headphone output"), c, split, lab, off, tip, Ui.Btn("Forget sign-in", async () => { await Secrets.ClearAsync(); Say("Sign-in removed from the keyring"); })));
+        var w = Dialog("Settings", Col(Ui.Label("Master output"), Row(m, testM), Ui.Label("Headphone output"), Row(c, testC), testMsg, split, lab, off, tip, Ui.Btn("Forget sign-in", async () => { await Secrets.ClearAsync(); Say("Sign-in removed from the keyring"); })), 540);
         w.Closed += (_, _) => _s.Save();
         _ = w.ShowDialog(this);
     }

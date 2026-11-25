@@ -105,11 +105,31 @@ public sealed unsafe class Output : IDisposable
         }
     }
 
-    nint Open(OutputDevice d, delegate* unmanaged[Cdecl]<nint, float*, CULong, nint, CULong, nint, int> cb)
+    nint Open(OutputDevice d, delegate* unmanaged[Cdecl]<nint, float*, CULong, nint, CULong, nint, int> cb) => OpenStream(d, cb, _self);
+
+    static nint OpenStream(OutputDevice d, delegate* unmanaged[Cdecl]<nint, float*, CULong, nint, CULong, nint, int> cb, GCHandle user)
     {
         var p = new StreamParams { Device = d.Index, Channels = 2, Format = new CULong(1), Latency = 0.04 };
-        Check(Pa_OpenStream(out var s, 0, &p, TrackBuffer.SampleRate, new CULong(512), new CULong(0), cb, GCHandle.ToIntPtr(_self)));
+        Check(Pa_OpenStream(out var s, 0, &p, TrackBuffer.SampleRate, new CULong(512), new CULong(0), cb, GCHandle.ToIntPtr(user)));
         return s;
+    }
+
+    internal static nint StartTone(OutputDevice device, GCHandle handle)
+    {
+        Check(InitError);
+        var s = OpenStream(device, &ToneCallback, handle);
+        int e = Pa_StartStream(s);
+        if (e < 0) { Pa_CloseStream(s); Check(e); }
+        return s;
+    }
+
+    internal static void StopTone(nint s) { Pa_AbortStream(s); Pa_CloseStream(s); }
+
+    [UnmanagedCallersOnly(CallConvs = [typeof(CallConvCdecl)])]
+    static int ToneCallback(nint input, float* o, CULong n, nint time, CULong flags, nint user)
+    {
+        Unsafe.As<TestTone>(GCHandle.FromIntPtr(user).Target!).Render(new Span<float>(o, (int)n.Value * 2));
+        return 0;
     }
 
     static void Check(int e)

@@ -39,6 +39,11 @@ static partial class Program
     {
         GCSettings.LatencyMode = GCLatencyMode.SustainedLowLatency;
         if (args.Length > 0 && args[0] == "--soak") return Soak(args);
+        if (args is ["--tone", var name])
+        {
+            TestTone.PlayAsync(Output.Devices().First(d => d.Name.Contains(name))).GetAwaiter().GetResult();
+            return 0;
+        }
         return AppBuilder.Configure<App>().UsePlatformDetect().WithInterFont().StartWithClassicDesktopLifetime(args);
     }
 }

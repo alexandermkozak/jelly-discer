@@ -7,7 +7,7 @@ A two-deck DJ practice app for Linux that plays music from a Jellyfin server.
 Needs the .NET 10 SDK, `ffmpeg` and PortAudio. Optional: Rubber Band (key lock) and `secret-tool` (remembers sign-in).
 
 1. Sign in with a Jellyfin account or Quick Connect. The token is kept in the desktop keyring.
-2. In **Settings** choose the master and headphone outputs, then set the headphone delay by ear.
+2. In **Settings** choose the master and headphone outputs (**Test** plays a tone on the selected one), then set the headphone delay by ear.
 3. Load tracks with **A** / **B** in the library. **Analyze shown** prepares the filtered list ahead of time; the beatmatch drill needs tracks at similar tempos that have been analyzed.
 
 Assist presets: *Guided* shows everything, *Partial* hides the phase meter and sync, *Ears only* hides BPM and grids too.
