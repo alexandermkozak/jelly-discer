@@ -13,6 +13,7 @@ public sealed class Settings
     public float CueOffsetMs { get; set; }
     public bool SplitMono { get; set; }
     public float CueBlend { get; set; }
+    public string LastPlaylist { get; set; } = "";
     public bool KeyHints { get; set; } = true;
     public Dictionary<string, string> Keys { get; set; } = [];
 

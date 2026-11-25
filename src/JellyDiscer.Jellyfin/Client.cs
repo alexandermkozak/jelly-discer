@@ -8,7 +8,7 @@ namespace JellyDiscer.Jellyfin;
 public sealed record Track(string Id, string Title, string Artist, string Album, string Genre, double Seconds, double? GainDb);
 public sealed record Session(string Server, string UserId, string UserName, string Token);
 
-public sealed class JellyfinClient
+public sealed partial class JellyfinClient
 {
     readonly HttpClient _http;
     readonly string _base, _deviceId;

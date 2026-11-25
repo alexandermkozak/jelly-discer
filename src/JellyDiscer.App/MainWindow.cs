@@ -23,6 +23,9 @@ public sealed class MainWindow : Window
     readonly DeckController[] _d;
     readonly Assists _assists = new();
     readonly Drills _drills;
+    readonly SetList _set;
+    readonly ComboBox _source = new() { MinWidth = 190, Focusable = false };
+    bool _fillingSource;
     readonly Dictionary<string, (Action down, Action? up)> _commands = [];
     Dictionary<Key, string> _keys;
     readonly HashSet<Key> _held = [];
@@ -35,7 +38,7 @@ public sealed class MainWindow : Window
     List<Track> _tracks = [];
     Dictionary<string, BeatGrid> _grids = [];
     readonly ListBox _list = new() { Background = Ui.Well, SelectionMode = SelectionMode.Single };
-    readonly TextBox _search = new() { PlaceholderText = "Search title, artist, album, genre, or bpm:120-130", MinWidth = 320 };
+    readonly TextBox _search = new() { PlaceholderText = "Search, or bpm:120-130", MinWidth = 260, MaxWidth = 260 };
     readonly TextBlock _status = Ui.Label("", 12, Ui.Dim), _drillText = Ui.Label("", 13);
     readonly ComboBox _preset = new() { ItemsSource = new[] { "Guided", "Partial", "Ears only" }, SelectedIndex = 0, Focusable = false };
     CancellationTokenSource? _analyze;
@@ -47,6 +50,8 @@ public sealed class MainWindow : Window
         Title = "jelly-discer"; Width = 1400; Height = 940; MinWidth = 1180; MinHeight = 760; Background = Ui.Bg;
         _d = [new(0, _engine, _store, _assists), new(1, _engine, _store, _assists)];
         _drills = new(_d[0], _d[1], _store, () => _tracks);
+        _set = new SetList(() => _client);
+        _set.Changed += OnSetChanged;
         _keys = _s.KeyMap();
         _engine.PhoneMode = _s.SplitMono ? PhoneMode.SplitMono : PhoneMode.Blend;
         _engine.CueOffsetMs = _s.CueOffsetMs;
@@ -282,6 +287,19 @@ public sealed class MainWindow : Window
         var grid = Row(Ui.Label("Grid", 11, Ui.Dim), Hint(Ui.Btn("Tap", d.Tap, "Tap along at least five times"), p + "tap"), Ui.Btn("/2", () => d.ScaleBpm(0.5)), Ui.Btn("x2", () => d.ScaleBpm(2)),
             Ui.Btn("<", () => d.ShiftGrid(-5), "Grid 5 ms earlier"), Ui.Btn(">", () => d.ShiftGrid(5), "Grid 5 ms later"), Ui.Btn("Downbeat here", d.SetDownbeat), conf);
         _tick.Add(() => grid.IsVisible = _assists.Grid || _assists.Bpm);
+        var place = Ui.Label("", 11, Ui.Dim);
+        Bind(place, () => _set.Current is not { } pl ? "Set: none open" : _set.Find(d.Track) is { } en ? $"Set: {_set.Entries.IndexOf(en) + 1} of {_set.Entries.Count}" : "Set: not in " + pl.Name);
+        var next = Ui.Btn("Load next", () => LoadNext(d), "Load the track that follows the other deck's in the open playlist");
+        var add = Ui.Btn("Add to...", () => { }, "Add this deck's track to a playlist");
+        add.Click += (_, _) => { if (d.Track is { } t) AddMenu(add, t); };
+        var drop = Ui.Btn("Remove", () => { if (_set.Find(d.Track) is { } en) Do(_set.RemoveAsync(en)); }, "Remove this deck's track from the open playlist");
+        _tick.Add(() =>
+        {
+            next.IsEnabled = _set.Current != null && !d.Deck.Playing;
+            add.IsEnabled = d.Track != null && !_set.Busy;
+            drop.IsEnabled = !_set.Busy && _set.Find(d.Track) != null;
+        });
+        var setRow = Row(next, add, drop, place);
 
         var tempo = Live(new Fader(true, -1, 1, 0, () => -d.Deck.Tempo / d.Range, v => d.Deck.Tempo = (float)(-v * d.Range)) { Width = 44, Height = 180 });
         ToolTip.SetTip(tempo, "Tempo: down is faster. Scroll for fine control, Shift+scroll for finer, double-click resets");
@@ -292,7 +310,7 @@ public sealed class MainWindow : Window
         var tcol = Col(range, tempo, pct, HintLabel(p + "tempo-", p + "tempo+")); tcol.Width = 64;
         tcol.Children[0].HorizontalAlignment = HorizontalAlignment.Center;
         var g2 = new Grid { ColumnDefinitions = new("*,Auto") };
-        var left = Col(head, over, transport, hot, grid); left.Spacing = 10;
+        var left = Col(head, over, transport, hot, grid, setRow); left.Spacing = 10;
         Grid.SetColumn(tcol, 1);
         g2.Children.AddRange([left, tcol]);
         return Panel(g2);
@@ -336,15 +354,38 @@ public sealed class MainWindow : Window
 
     Control Library()
     {
-        _list.ItemTemplate = new FuncDataTemplate<Track>((t, ns) =>
+        _list.ItemTemplate = new FuncDataTemplate<LibRow>((r, ns) =>
         {
-            var g = new Grid { ColumnDefinitions = new("70,60,3*,2*,2*,2*,60"), ColumnSpacing = 8 };
-            if (t == null) return g;
+            var g = new Grid { ColumnDefinitions = new("165,120,3*,2*,2*,2*,60"), ColumnSpacing = 8 };
+            if (r == null) return g;
+            var t = r.T;
             void Add(int c, string s, IBrush? b = null) { var x = Ui.Label(s, 12, b); x.TextTrimming = TextTrimming.CharacterEllipsis; Grid.SetColumn(x, c); g.Children.Add(x); }
             var row = Row(Ui.Btn("A", () => _ = LoadTrack(0, t)), Ui.Btn("B", () => _ = LoadTrack(1, t)));
+            var plus = Ui.Btn("+", () => { }, "Add to a playlist");
+            plus.Click += (_, _) => AddMenu(plus, t);
+            row.Children.Add(plus);
+            if (r.Entry is { } en)
+            {
+                if (_sort == 0 && string.IsNullOrWhiteSpace(_search.Text)) // moving only makes sense when the whole order is on screen
+                    row.Children.AddRange([Ui.Btn("\u2191", () => Move(en, -1), "Earlier in the set"), Ui.Btn("\u2193", () => Move(en, 1), "Later in the set")]);
+                row.Children.Add(Ui.Btn("\u00d7", () => Do(_set.RemoveAsync(en)), "Remove from this playlist"));
+            }
+            row.Spacing = 3;
             foreach (var b in row.Children.OfType<Button>()) b.Padding = new(7, 1);
             g.Children.Add(row);
-            Add(1, _grids.TryGetValue(t.Id, out var gr) && _assists.Bpm ? $"{gr.Bpm:F1}{(gr.Confident ? "" : "?")}" : "", Ui.Dim);
+            string bpm = "";
+            IBrush tint = Ui.Dim;
+            if (_assists.Bpm && _grids.TryGetValue(t.Id, out var gr))
+            {
+                bpm = $"{gr.Bpm:F1}{(gr.Confident ? "" : "?")}";
+                if (_sort == 0 && r.Previous is { } prev && _grids.TryGetValue(prev.Id, out var pg))
+                {
+                    double step = TempoStep.Percent(pg.Bpm, gr.Bpm);
+                    bpm += $"  {step:+0.0;-0.0;0.0}%";
+                    if (Math.Abs(step) > 8) tint = Ui.Yellow;
+                }
+            }
+            Add(1, bpm, tint);
             Add(2, t.Title); Add(3, t.Artist); Add(4, t.Album, Ui.Dim); Add(5, t.Genre, Ui.Dim); Add(6, Ui.Time(t.Seconds), Ui.Dim);
             return g;
         });
@@ -352,10 +393,29 @@ public sealed class MainWindow : Window
         _search.TextChanged += (_, _) => Filter();
         var analyze = Ui.Btn("Analyze shown", AnalyzeShown, "Download and find the beats of every track in the list");
         _tick.Add(() => { var s = _analyze == null ? "Analyze shown" : "Stop analyzing"; if ((string?)analyze.Content != s) analyze.Content = s; });
-        var sort = new ComboBox { ItemsSource = new[] { "Title", "Artist", "Album", "BPM" }, SelectedIndex = 0, Focusable = false };
+        var sort = new ComboBox { ItemsSource = new[] { "Set / title", "Artist", "Album", "BPM" }, SelectedIndex = 0, Focusable = false };
         sort.SelectionChanged += (_, _) => { _sort = sort.SelectedIndex; Filter(); };
         var count = Ui.Label("", 12, Ui.Dim); Bind(count, () => $"{_list.ItemCount} of {_tracks.Count}");
-        var bar = Row(_search, Ui.Label("Sort", 12, Ui.Dim), sort, analyze, Ui.Btn("Sign in", () => _ = SignIn()), count);
+        _source.ItemsSource = new[] { "Full library" };
+        _source.SelectedIndex = 0;
+        _source.SelectionChanged += (_, _) =>
+        {
+            if (_fillingSource || _source.SelectedIndex < 0) return;
+            var id = _source.SelectedIndex == 0 ? null : _set.All[_source.SelectedIndex - 1].Id;
+            _s.LastPlaylist = id ?? "";
+            _s.Save();
+            Do(_set.OpenAsync(id));
+        };
+        var rename = Ui.Btn("Rename", () => AskName("Rename playlist", _set.Current?.Name ?? "", n => Do(_set.RenameAsync(n))));
+        var undo = Ui.Btn("Undo remove", () => Do(_set.UndoAsync()));
+        _tick.Add(() =>
+        {
+            _source.IsEnabled = !_set.Busy && _client != null;
+            rename.IsVisible = _set.Current != null;
+            undo.IsVisible = _set.UndoTitle != null;
+        });
+        var bar = Row(_source, Ui.Btn("New", () => AskName("New playlist", "", n => Do(_set.CreateAsync(n, null))), "Create a playlist on the server"), rename,
+            Ui.Btn("\u21bb", () => Do(_set.RefreshAsync()), "Read playlists from the server again"), undo, _search, Ui.Label("Sort", 12, Ui.Dim), sort, analyze, Ui.Btn("Sign in", () => _ = SignIn()), count);
         var g = new Grid { RowDefinitions = new("Auto,*"), RowSpacing = 6 };
         Grid.SetRow(_list, 1);
         g.Children.AddRange([bar, _list]);
@@ -364,18 +424,67 @@ public sealed class MainWindow : Window
     int _sort;
     void Filter()
     {
-        IEnumerable<Track> q = _tracks;
+        IEnumerable<LibRow> q = _set.Current == null ? _tracks.Select(t => new LibRow(t)) : _set.Entries.Select((e, i) => new LibRow(e.Track, e, i > 0 ? _set.Entries[i - 1].Track : null));
         foreach (var w in (_search.Text ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries))
         {
             if (w.StartsWith("bpm:", StringComparison.OrdinalIgnoreCase))
             {
                 var p = w[4..].Split('-');
-                if (double.TryParse(p[0], out var lo)) { double hi = p.Length > 1 && double.TryParse(p[1], out var h) ? h : lo + 1; q = q.Where(t => _grids.TryGetValue(t.Id, out var g) && g.Bpm >= lo && g.Bpm <= hi); }
+                if (double.TryParse(p[0], out var lo)) { double hi = p.Length > 1 && double.TryParse(p[1], out var h) ? h : lo + 1; q = q.Where(r => _grids.TryGetValue(r.T.Id, out var g) && g.Bpm >= lo && g.Bpm <= hi); }
             }
-            else q = q.Where(t => (t.Title + "\n" + t.Artist + "\n" + t.Album + "\n" + t.Genre).Contains(w, StringComparison.OrdinalIgnoreCase));
+            else q = q.Where(r => (r.T.Title + "\n" + r.T.Artist + "\n" + r.T.Album + "\n" + r.T.Genre).Contains(w, StringComparison.OrdinalIgnoreCase));
         }
-        q = _sort switch { 1 => q.OrderBy(t => t.Artist), 2 => q.OrderBy(t => t.Album), 3 => q.OrderBy(t => _grids.TryGetValue(t.Id, out var g) ? g.Bpm : 999), _ => q.OrderBy(t => t.Title) };
+        q = _sort switch { 1 => q.OrderBy(r => r.T.Artist), 2 => q.OrderBy(r => r.T.Album), 3 => q.OrderBy(r => _grids.TryGetValue(r.T.Id, out var g) ? g.Bpm : 999), _ => _set.Current != null ? q : q.OrderBy(r => r.T.Title) };
         _list.ItemsSource = q.ToList();
+    }
+
+    // ---- playlists ------------------------------------------------------
+    async void Do(Task<string> work) { var m = await work; if (m.Length > 0) Say(m); }
+    async void Move(PlaylistEntry e, int step)
+    {
+        Say(await _set.MoveAsync(e, step));
+        if ((_list.ItemsSource as List<LibRow>)?.FirstOrDefault(r => r.Entry?.EntryId == e.EntryId) is { } row) { _list.SelectedItem = row; _list.ScrollIntoView(row); }
+    }
+    void OnSetChanged()
+    {
+        _fillingSource = true;
+        _source.ItemsSource = _set.All.Select(p => $"{p.Name} ({(p.Id == _set.Current?.Id ? _set.Entries.Count : p.Count)})").Prepend("Full library").ToList();
+        _source.SelectedIndex = _set.Current == null ? 0 : _set.All.FindIndex(p => p.Id == _set.Current.Id) + 1;
+        _fillingSource = false;
+        if (_set.Current != null && _s.LastPlaylist != _set.Current.Id) { _s.LastPlaylist = _set.Current.Id; _s.Save(); }
+        var scroll = _list.Scroll?.Offset;
+        Filter();
+        if (scroll is { } o) Dispatcher.UIThread.Post(() => { if (_list.Scroll != null) _list.Scroll.Offset = o; }, DispatcherPriority.Background);
+    }
+    void AddMenu(Control at, Track t)
+    {
+        var menu = new MenuFlyout();
+        foreach (var p in _set.All)
+        {
+            var item = new MenuItem { Header = new TextBlock { Text = p.Name } };
+            item.Click += (_, _) => Do(_set.AddAsync(p, t));
+            menu.Items.Add(item);
+        }
+        var fresh = new MenuItem { Header = "New playlist..." };
+        fresh.Click += (_, _) => AskName("New playlist", "", n => Do(_set.CreateAsync(n, t)));
+        menu.Items.Add(fresh);
+        menu.ShowAt(at);
+    }
+    void AskName(string title, string initial, Action<string> ok)
+    {
+        var box = new TextBox { Text = initial, PlaceholderText = "Playlist name", MaxLength = 100 };
+        Window? w = null;
+        void Accept() { var n = (box.Text ?? "").Trim(); if (n.Length == 0) return; w!.Close(); ok(n); }
+        box.KeyDown += (_, e) => { if (e.Key == Key.Enter) Accept(); else if (e.Key == Key.Escape) w!.Close(); };
+        w = Dialog(title, Col(box, Ui.Btn("Save", Accept)), 360);
+        w.Opened += (_, _) => { box.Focus(); box.SelectAll(); };
+        _ = w.ShowDialog(this);
+    }
+    void LoadNext(DeckController d)
+    {
+        var t = _set.NextFor(d.Track, _d[1 - d.Index].Track);
+        if (t == null) Say("That was the last track of the set");
+        else _ = LoadTrack(d.Index, t);
     }
 
     // ---- actions --------------------------------------------------------
@@ -392,7 +501,7 @@ public sealed class MainWindow : Window
         if (_analyze != null) { _analyze.Cancel(); return; }
         if (_client is not { } client) return;
         var cts = _analyze = new CancellationTokenSource();
-        var todo = (_list.ItemsSource as IEnumerable<Track> ?? []).Where(t => _store.Get(t.Id) == null && t.Seconds is > 20 and < 1200).ToList();
+        var todo = (_list.ItemsSource as IEnumerable<LibRow> ?? []).Select(r => r.T).Where(t => _store.Get(t.Id) == null && t.Seconds is > 20 and < 1200).ToList();
         int done = 0, failed = 0;
         try
         {
@@ -466,7 +575,7 @@ public sealed class MainWindow : Window
     {
         var url = Environment.GetEnvironmentVariable("JELLY_URL");
         var tok = Environment.GetEnvironmentVariable("JELLY_TOKEN");
-        if (url != null && tok != null) { await UseAsync(new JellyfinClient(url, _s.DeviceId) { Token = tok }); return; }
+        if (url != null && tok != null) { await UseAsync(new JellyfinClient(url, _s.DeviceId) { Token = tok, UserId = Environment.GetEnvironmentVariable("JELLY_USER") }); return; }
         if (await Secrets.LoadAsync() is { } s)
         {
             try { if (await UseAsync(new JellyfinClient(s.Server, _s.DeviceId) { Token = s.Token, UserId = s.UserId })) return; }
@@ -484,6 +593,12 @@ public sealed class MainWindow : Window
             _grids = _store.Grids();
             Filter();
             Say($"Connected to {c.Server}: {_tracks.Count} tracks");
+            if (c.UserId != null)
+            {
+                var m = await _set.RefreshAsync();
+                if (m.Length == 0 && _set.All.Any(p => p.Id == _s.LastPlaylist)) m = await _set.OpenAsync(_s.LastPlaylist);
+                if (m.Length > 0) Say(m);
+            }
             return true;
         }
         catch (Exception e) { Say("Jellyfin: " + e.Message); return e is not UnauthorizedAccessException; }
@@ -545,6 +660,12 @@ public sealed class MainWindow : Window
         _d[0].ClearHotCue(1);
         _assists.Quantize = true;
         _d[1].Sync(_d[0]);
+        if (_set.All.Count > 0)
+        {
+            Say(await _set.OpenAsync(_set.All[0].Id));
+            Console.WriteLine($"playlists {_set.All.Count}, opened '{_set.Current?.Name}' with {_set.Entries.Count}, rows {_list.ItemCount}, next: {_set.NextFor(null, _set.Entries[0].Track)?.Title}");
+            _grids = _store.Grids();
+        }
         _d[0].HotCue(0); _d[1].ToggleLoop(); _d[1].Channel.Pfl = true;
         await Task.Delay(1000);
         Shoot(png);
